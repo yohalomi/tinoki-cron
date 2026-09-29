@@ -1,0 +1,26 @@
+# Pings the Tinoki app so it can send phone reminders (feeding, vitamin D, tasks).
+# Public on purpose: scheduled Actions in public repos are free. No code, secrets or data live here.
+name: tick
+on:
+  schedule:
+    - cron: '*/15 * * * *'
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  tick:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - name: Ask the app to send any due reminders
+        run: curl -fsS --retry 2 --max-time 60 https://tinoki.vercel.app/api/tick
+      - uses: actions/checkout@v4
+      - name: Keep the schedule alive
+        # GitHub pauses scheduled workflows in repos with no commits for 60 days.
+        run: |
+          last=$(git log -1 --format=%ct)
+          if [ $(( $(date +%s) - last )) -gt $(( 30*24*3600 )) ]; then
+            date -u +%FT%TZ > .keepalive
+            git config user.name "tinoki-bot"; git config user.email "tinoki-bot@users.noreply.github.com"
+            git add .keepalive && git commit -m "keepalive" && git push
+          fi
