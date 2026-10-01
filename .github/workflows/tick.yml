@@ -1,21 +1,28 @@
 # Pings the Tinoki app so it can send phone reminders (feeding, vitamin D, tasks).
-# Public on purpose: scheduled Actions in public repos are free. No code, secrets or data live here.
+# Public on purpose: Actions in public repos are free. No code, secrets or data live here.
+#
+# GitHub's own cron is best-effort and in practice fires only every few hours, which is too
+# coarse for reminders. So each run stays up for ~5h40m and checks every 5 minutes, then starts
+# the next run itself (workflow_dispatch from GITHUB_TOKEN is allowed to trigger a new run).
+# The hourly schedule is only a safety net in case the chain ever breaks.
 name: tick
 on:
   schedule:
-    - cron: '*/15 * * * *'
+    - cron: '17 * * * *'
   workflow_dispatch:
   push:
     branches: [main]
+concurrency:
+  group: tick
+  cancel-in-progress: false
 permissions:
   contents: write
+  actions: write
 jobs:
   tick:
     runs-on: ubuntu-latest
-    timeout-minutes: 3
+    timeout-minutes: 350
     steps:
-      - name: Ask the app to send any due reminders
-        run: curl -fsS --retry 2 --max-time 60 https://tinoki.vercel.app/api/tick
       - uses: actions/checkout@v4
       - name: Keep the schedule alive
         # GitHub pauses scheduled workflows in repos with no commits for 60 days.
@@ -26,3 +33,15 @@ jobs:
             git config user.name "tinoki-bot"; git config user.email "tinoki-bot@users.noreply.github.com"
             git add .keepalive && git commit -m "keepalive" && git push
           fi
+      - name: Check for due reminders every 5 minutes
+        run: |
+          end=$(( $(date +%s) + 340*60 ))
+          while [ $(date +%s) -lt $end ]; do
+            echo "$(TZ=Asia/Jerusalem date +%H:%M) $(curl -sS --retry 2 --max-time 60 https://tinoki.vercel.app/api/tick || echo failed)"
+            sleep 300
+          done
+      - name: Start the next run
+        if: ${{ !cancelled() }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run tick.yml --repo ${{ github.repository }} --ref main
